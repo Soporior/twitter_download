@@ -124,11 +124,28 @@ _headers['cookie'] = settings['cookie']
 request_count = 0    #请求次数计数
 down_count = 0      #下载图片数计数
 
+def log_error(error_type, location, error_msg, user_info=None, additional_info=None):
+    """记录错误到本地文件"""
+    error_log_file = 'error_log.txt'
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(error_log_file, 'a', encoding='utf-8') as f:
+        f.write(f"\n{'='*60}\n")
+        f.write(f"时间: {timestamp}\n")
+        f.write(f"错误类型: {error_type}\n")
+        f.write(f"错误位置: {location}\n")
+        if user_info:
+            f.write(f"用户信息: {user_info.screen_name if hasattr(user_info, 'screen_name') else str(user_info)}\n")
+        f.write(f"错误信息: {error_msg}\n")
+        if additional_info:
+            f.write(f"附加信息: {additional_info}\n")
+        f.write(f"{'='*60}\n")
+
 def get_other_info(_user_info):
     url = 'https://twitter.com/i/api/graphql/xc8f1g7BYqr6VTzTbvNlGw/UserByScreenName?variables={"screen_name":"' + _user_info.screen_name + '","withSafetyModeUserFields":false}&features={"hidden_profile_likes_enabled":false,"hidden_profile_subscriptions_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"subscriptions_verification_info_verified_since_enabled":true,"highlights_tweets_tab_ui_enabled":true,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true}&fieldToggles={"withAuxiliaryUserLabels":false}'
+    response = None
     try:
         global request_count
-        response = httpx.get(quote_url(url), headers=_headers, proxy=proxies).text
+        response = httpx.get(quote_url(url), headers=_headers, proxy=proxies, timeout=30.0).text
         request_count += 1
         raw_data = json.loads(response)
         _user_info.rest_id = raw_data['data']['user']['result']['rest_id']
@@ -136,9 +153,16 @@ def get_other_info(_user_info):
         _user_info.statuses_count = raw_data['data']['user']['result']['legacy']['statuses_count']
         _user_info.media_count = raw_data['data']['user']['result']['legacy']['media_count']
     except Exception as e:
+        error_msg = str(e)
+        location = f"main.py:get_other_info (第131行附近)"
         print('获取信息失败')
-        print(e)
-        print(response)
+        print(error_msg)
+        if response:
+            print(f"响应内容: {response[:500]}...")  # 只打印前500个字符
+            log_error("获取用户信息失败", location, error_msg, _user_info, f"响应内容: {response[:500]}")
+        else:
+            print("请求未完成，未获取到响应")
+            log_error("获取用户信息失败", location, error_msg, _user_info, "请求未完成，未获取到响应")
         return False
     return True
 
@@ -267,9 +291,10 @@ def get_download_url(_user_info):
         url = url_top + '"cursor":"' + _user_info.cursor + '",' + url_bottom
     else:
         url = url_top + url_bottom      #第一页,无cursor
+    response = None
     try:
         global request_count
-        response = httpx.get(quote_url(url), headers=_headers, proxy=proxies).text
+        response = httpx.get(quote_url(url), headers=_headers, proxy=proxies, timeout=30.0).text
         request_count += 1
         try:
             raw_data = json.loads(response)
@@ -313,9 +338,16 @@ def get_download_url(_user_info):
         if not photo_lst:
             photo_lst.append(True)
     except Exception as e:
+        error_msg = str(e)
+        location = f"main.py:get_download_url (第294-333行附近)"
         print('获取推文信息错误')
-        print(e)
-        print(response)
+        print(error_msg)
+        if response:
+            print(f"响应内容: {response[:500]}...")  # 只打印前500个字符
+            log_error("获取推文信息错误", location, error_msg, _user_info, f"响应内容: {response[:500]}")
+        else:
+            print("请求未完成，未获取到响应")
+            log_error("获取推文信息错误", location, error_msg, _user_info, "请求未完成，未获取到响应")
         return False
     return photo_lst
 
@@ -393,6 +425,8 @@ def main(_user_info: object):
     _headers['x-csrf-token'] = re.findall(re_token,_headers['cookie'])[0]
     _headers['referer'] = 'https://twitter.com/' + _user_info.screen_name
     if not get_other_info(_user_info):
+        print(f'用户 {_user_info.screen_name} 获取信息失败，跳过该用户继续处理下一个')
+        log_error("用户信息获取失败", "main.py:main (第395行)", f"用户 {_user_info.screen_name} 的信息获取失败，已跳过", _user_info)
         return False
     print_info(_user_info)
     _path = settings['save_path'] + _user_info.screen_name
