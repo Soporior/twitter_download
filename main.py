@@ -9,7 +9,7 @@ import sys
 
 sys.path.append('.')
 from user_info import User_info
-from csv_gen import csv_gen
+from db_log import db_log
 from md_gen import md_gen
 from cache_gen import cache_gen
 from url_utils import quote_url
@@ -45,7 +45,7 @@ has_retweet = False
 has_highlights = False
 has_likes = False
 has_video = False
-csv_file = None
+db_file = None
 cache_data = None
 down_log = False
 autoSync = False
@@ -107,6 +107,14 @@ with open('settings.json', 'r', encoding='utf8') as f:
 
     if not settings['md_output']:
         md_output = False
+
+    db_config = {
+        'host': settings.get('db_host', '127.0.0.1'),
+        'port': settings.get('db_port', 5432),
+        'database': settings.get('db_name', 'twitter_download'),
+        'user': settings.get('db_user', 'postgres'),
+        'password': settings.get('db_password', '123456')
+    }
 
     if settings['media_count_limit']:
         media_count_limit = settings['media_count_limit']
@@ -387,7 +395,7 @@ def download_control(_user_info):
                     with open(_file_name,'wb') as f:
                         f.write(response.content)
 
-                    csv_file.data_input(csv_info)
+                    db_file.data_input(csv_info)
 
                     if log_output:
                         print(f'{_file_name}=====>下载完成')
@@ -436,8 +444,8 @@ def main(_user_info: object):
     else:
         _user_info.save_path = _path
 
-    global csv_file
-    csv_file = csv_gen(_user_info.save_path, _user_info.name, _user_info.screen_name, settings['time_range'])
+    global db_file
+    db_file = db_log(_user_info.save_path, _user_info.name, _user_info.screen_name, settings['time_range'], db_config)
 
     if md_output:
         global md_file
@@ -466,8 +474,8 @@ def main(_user_info: object):
 
     download_control(_user_info)
 
-    csv_file.csv_close()
-    
+    db_file.db_close()
+
     if md_output:
         md_file.md_close()
 

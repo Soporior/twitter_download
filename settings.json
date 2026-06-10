@@ -54,5 +54,12 @@
     "media_count_limit_info": "限制单个md文件中包含媒体链接的数量, 默认为 350, 建议使用vscode等动态加载工具打开, 填 0 则不限制",
     "media_count_limit_info_2": "输出格式为：用户名-文件生成日期_文件计数_文件第一条推文的年月日期",
 
-    "(๑´ڡ`๑)": "info 是注释,凑合着看吧"
+    "(๑´ڡ`๑)": "info 是注释,凑合着看吧",
+
+    "db_host": "127.0.0.1",
+    "db_port": 5432,
+    "db_name": "twitter_download",
+    "db_user": "postgres",
+    "db_password": "123456",
+    "db_config_info": "PostgreSQL 数据库连接配置"
 }
