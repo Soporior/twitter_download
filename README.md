@@ -103,7 +103,16 @@ python3 main.py
 
 **指定用户纯文本推文获取 --> text_down.py** 
 
-**指定用户媒体文件获取&转推&亮点&喜欢(只能本人账号)等 --> main.py + settings.json** 
+**指定用户媒体文件获取&转推&亮点&喜欢 --> main.py + settings.json**
+
+- **下载当前登录账号自己的 Likes：**
+  - 在 settings.json 中设置 `"own_likes": true`
+  - 程序会通过 cookie 自动识别当前登录账号并下载其 Likes
+  - 开启后不需要配置 user_list.txt，且会忽略其中的用户名
+
+- **下载指定用户的 Likes：**
+  - 在 settings.json 中设置 `"likes": true` 且 `"own_likes": false`
+  - 程序会下载 user_list.txt 中列出的每个用户的 Likes endpoint 
 
 其余各种不能解决的需求建议试试tag_down的高级搜索, 或是提交Issue 
 

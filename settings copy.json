@@ -18,7 +18,9 @@
     "high_lights_info": "推特的 [Highlights]亮点 标签,与 [媒体][转推] 不共存,即仅下载亮点标签下的内容",
 
     "likes": false,
-    "likes_info": "用户界面 [Likes] 标签页,即下载指定用户点过赞的推文,与 [媒体][转推][亮点] 不共存, 不支持时间范围限制默认全部下载(点赞时间无法获取), 不生成csv数据统计",
+    "likes_info": "下载 user_lst 中指定用户的 Likes endpoint；如需自动下载当前 cookie 登录账号自己的 Likes，请使用 own_likes",
+    "own_likes": false,
+    "own_likes_info": "下载当前 cookie 登录账号自己的 Likes；开启后自动识别登录账号并忽略 user_lst，与 [媒体][转推][亮点] 不共存",
 
     "_emmmmmm_": "---------------",
     

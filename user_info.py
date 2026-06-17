@@ -7,8 +7,10 @@ class User_info():
         self.statuses_count = None #总推数(含转推)
         self.media_count = None  #含图片视频的推数(不含转推)
 
-        self.save_path = None
+        self.save_path = None           #总保存路径
+        self.save_path_images = None    #图片保存路径
+        self.save_path_videos = None    #视频保存路径
         self.cursor = None       #下一页
         self.count = 0           #已获取计数,用于计算进度
-        
+
         pass

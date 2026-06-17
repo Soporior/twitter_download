@@ -46,9 +46,12 @@ has_highlights = False
 has_likes = False
 has_video = False
 db_file = None
+db_config = None
 cache_data = None
 down_log = False
 autoSync = False
+proxies = None
+own_likes = False
 
 md_file = None
 md_output = True
@@ -61,67 +64,110 @@ First_Page = True       #首页提取内容时特殊处理
 
 with open('settings.json', 'r', encoding='utf8') as f:
     settings = json.load(f)
-    if not settings['save_path']:
-        settings['save_path'] = os.getcwd()
-    settings['save_path'] += os.sep
-    if settings['has_retweet']:
-        has_retweet = True
-    if settings['high_lights']:
-        has_highlights = True
-        has_retweet = False
-    if settings['time_range']:
-        time_range = True
-        start_time,end_time = settings['time_range'].split(':')
-        start_time_stamp,end_time_stamp = time2stamp(start_time),time2stamp(end_time)
-    if settings['autoSync']:
-        autoSync = True
-    if settings['down_log']:
-        down_log = True
-    if settings['likes']:   #likes的逻辑和retweet大致相同
-        has_retweet = True
-        has_likes = True
-        has_highlights = False
-        start_time_stamp = 655028357000   #1990-10-04
-        end_time_stamp = 2548484357000    #2050-10-04
-    if settings['has_video']:
-        has_video = True
-    if settings['log_output']:
-        log_output = True
-    if settings['max_concurrent_requests']:
-        max_concurrent_requests = settings['max_concurrent_requests']
-    else:
-        max_concurrent_requests = 8
+
+if not settings['save_path']:
+    settings['save_path'] = os.getcwd()
+settings['save_path'] += os.sep
+if settings.get('own_likes'):
+    own_likes = True
+if settings['has_retweet'] and not own_likes:
+    has_retweet = True
+if settings['high_lights'] and not own_likes:
+    has_highlights = True
+    has_retweet = False
+if settings['time_range']:
+    time_range = True
+    start_time,end_time = settings['time_range'].split(':')
+    start_time_stamp,end_time_stamp = time2stamp(start_time),time2stamp(end_time)
+if settings['autoSync']:
+    autoSync = True
+if settings['down_log']:
+    down_log = True
+if settings.get('likes') or own_likes:   #likes的逻辑和retweet大致相同
+    has_retweet = True
+    has_likes = True
+    has_highlights = False
+    start_time_stamp = 655028357000   #1990-10-04
+    end_time_stamp = 2548484357000    #2050-10-04
+if settings['has_video']:
+    has_video = True
+if settings['log_output']:
+    log_output = True
+if settings['max_concurrent_requests']:
+    max_concurrent_requests = settings['max_concurrent_requests']
+else:
+    max_concurrent_requests = 8
 ###### proxy ######
-    if settings['proxy']:
-        proxies = settings['proxy']
-    else:
-        proxies = None
+if settings['proxy']:
+    proxies = settings['proxy']
+else:
+    proxies = None
 
 ############
-    if settings['image_format'] == 'orig':
-        orig_format = True
-        img_format = 'jpg'
-    else:
-        orig_format = False
-        img_format = settings['image_format']
+if settings['image_format'] == 'orig':
+    orig_format = True
+    img_format = 'jpg'
+else:
+    orig_format = False
+    img_format = settings['image_format']
 
-    if not settings['md_output']:
-        md_output = False
+if not settings['md_output']:
+    md_output = False
 
-    db_config = {
-        'host': settings.get('db_host', '127.0.0.1'),
-        'port': settings.get('db_port', 5432),
-        'database': settings.get('db_name', 'twitter_download'),
-        'user': settings.get('db_user', 'postgres'),
-        'password': settings.get('db_password', '123456')
-    }
+db_config = {
+    'host': settings.get('db_host', '127.0.0.1'),
+    'port': settings.get('db_port', 5432),
+    'database': settings.get('db_name', 'twitter_download'),
+    'user': settings.get('db_user', 'postgres'),
+    'password': settings.get('db_password', '123456')
+}
 
-    if settings['media_count_limit']:
-        media_count_limit = settings['media_count_limit']
-
-    f.close()
+if settings['media_count_limit']:
+    media_count_limit = settings['media_count_limit']
 
 backup_stamp = start_time_stamp
+
+def load_user_list():
+    """从文件加载用户名列表"""
+    user_file = settings.get('user_lst_file', 'user_list.txt')
+    try:
+        with open(user_file, 'r', encoding='utf-8') as f:
+            users = [line.strip() for line in f if line.strip()]
+        return users
+    except FileNotFoundError:
+        print(f"[ERROR] User list file not found: {user_file}")
+        return []
+
+def get_logged_in_screen_name():
+    """从cookie识别当前登录账号的screen_name"""
+    try:
+        import re
+        re_token = 'ct0=(.*?);'
+        ct0_match = re.findall(re_token, settings['cookie'])
+        if not ct0_match:
+            print("[ERROR] cookie中缺少 ct0，无法识别登录账号")
+            return None
+        _headers['x-csrf-token'] = ct0_match[0]
+    except Exception as e:
+        print(f"[ERROR] 解析 cookie 中 ct0 失败: {e}")
+        return None
+
+    try:
+        global request_count
+        url = 'https://twitter.com/i/api/1.1/account/settings.json'
+        response = httpx.get(url, headers=_headers, proxy=proxies, timeout=30.0).text
+        request_count += 1
+        raw_data = json.loads(response)
+        screen_name = raw_data.get('screen_name')
+        if not screen_name:
+            print("[ERROR] 无法识别当前登录账号，请检查 cookie/auth_token/ct0 是否有效")
+            if 'errors' in raw_data:
+                print(f"[ERROR] Twitter API 返回错误: {raw_data['errors']}")
+            return None
+        return screen_name
+    except Exception as e:
+        print(f"[ERROR] 识别登录账号失败: {e}")
+        return None
 
 _headers = {
     'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
@@ -156,21 +202,32 @@ def get_other_info(_user_info):
         response = httpx.get(quote_url(url), headers=_headers, proxy=proxies, timeout=30.0).text
         request_count += 1
         raw_data = json.loads(response)
+
+        # 检查用户是否被封禁或不存在
+        user_result = raw_data.get('data', {}).get('user', {}).get('result', {})
+        if user_result.get('__typename') == 'UserUnavailable':
+            reason = user_result.get('reason', 'Unknown')
+            msg = user_result.get('message', 'User unavailable')
+            print(f'[WARN] 用户 {_user_info.screen_name} 无法访问: {msg} ({reason})')
+            log_error("用户不可用", "get_other_info", f"用户被封禁或注销: {reason}", _user_info, msg)
+            return 'user_unavailable'
+
         _user_info.rest_id = raw_data['data']['user']['result']['rest_id']
         _user_info.name = raw_data['data']['user']['result']['legacy']['name']
         _user_info.statuses_count = raw_data['data']['user']['result']['legacy']['statuses_count']
         _user_info.media_count = raw_data['data']['user']['result']['legacy']['media_count']
     except Exception as e:
         error_msg = str(e)
-        location = f"main.py:get_other_info (第131行附近)"
-        print('获取信息失败')
-        print(error_msg)
+        location = f"main.py:get_other_info"
+        print(f'[ERROR] 获取用户 {_user_info.screen_name} 信息失败: {error_msg}')
         if response:
-            print(f"响应内容: {response[:500]}...")  # 只打印前500个字符
-            log_error("获取用户信息失败", location, error_msg, _user_info, f"响应内容: {response[:500]}")
+            if 'User unavailable' in response or 'suspended' in response.lower():
+                log_error("用户不可用", location, error_msg, _user_info, "用户被封禁或注销")
+                return 'user_unavailable'
+            log_error("获取用户信息失败", location, error_msg, _user_info, f"响应: {response[:500]}")
         else:
             print("请求未完成，未获取到响应")
-            log_error("获取用户信息失败", location, error_msg, _user_info, "请求未完成，未获取到响应")
+            log_error("获取用户信息失败", location, error_msg, _user_info, "请求未完成")
         return False
     return True
 
@@ -235,12 +292,14 @@ def get_download_url(_user_info):
                         if 'retweeted_status_result' not in a : #判断是否为转推,以及是否获取转推
                             name = _user_info.name
                             screen_name = _user_info.screen_name
+                            prefix_suffix = ''
                             if has_likes:
                                 a2 = i[x_label]['itemContent']['tweet_results']['result']['core']['user_results']['result']['legacy']
                                 name = a2['name']
                                 screen_name = a2['screen_name']
+                                prefix_suffix = '-liked'
                             if 'extended_entities' in a:
-                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr) if 'video_info' in _media and has_video else (_media['media_url_https'], f'{timestr}-img', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr) for _media in a['extended_entities']['media']]
+                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid{prefix_suffix}', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr) if 'video_info' in _media and has_video else (_media['media_url_https'], f'{timestr}-img{prefix_suffix}', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr) for _media in a['extended_entities']['media']]
 
                         elif has_retweet:
                             name = a['retweeted_status_result']['result']['core']['user_results']['result']['legacy']['name']
@@ -300,77 +359,92 @@ def get_download_url(_user_info):
     else:
         url = url_top + url_bottom      #第一页,无cursor
     response = None
-    try:
-        global request_count
-        response = httpx.get(quote_url(url), headers=_headers, proxy=proxies, timeout=30.0).text
-        request_count += 1
+    retry_count = 0
+    max_retries = 3
+    while retry_count < max_retries:
         try:
-            raw_data = json.loads(response)
-        except Exception:
-            if 'Rate limit exceeded' in response:
-                print('API次数已超限')
-            else:
-                print('获取数据失败')
-            print(response)
-            return
+            global request_count
+            response = httpx.get(quote_url(url), headers=_headers, proxy=proxies, timeout=30.0).text
+            request_count += 1
+            break
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                print(f'[ERROR] 请求失败，已重试{max_retries}次: {str(e)}')
+                log_error("网络请求失败", "get_download_url", f"重试{max_retries}次后失败: {str(e)}", _user_info)
+                return False
+            print(f'[WARN] 请求失败，第{retry_count}次重试: {str(e)}')
+            import asyncio
+            asyncio.sleep(2)  # 等待2秒后重试
+    try:
+        raw_data = json.loads(response)
+    except Exception:
+        if 'Rate limit exceeded' in response:
+            print('API次数已超限')
+        else:
+            print('获取数据失败')
+        print(response)
+        return []
+
+    try:
         if has_highlights:  #亮点模式
             raw_data = raw_data['data']['user']['result']['timeline']['timeline']['instructions'][-1]['entries']
         elif has_retweet:   #与likes共用
             raw_data = raw_data['data']['user']['result']['timeline_v2']['timeline']['instructions'][-1]['entries']
         else:   #usermedia模式
             raw_data = raw_data['data']['user']['result']['timeline_v2']['timeline']['instructions']
-        if (has_retweet or has_highlights) and 'cursor-top' in raw_data[0]['entryId']:      #含转推模式 所有推文已全部下载完成
-            return False
-        
+
+        if (has_retweet or has_highlights) and 'cursor-top' in raw_data[0]['entryId']:
+            return []
+
         if not has_retweet and not has_highlights:     #usermedia模式下的下一页请求编号
             for i in raw_data[-1]['entries']:
                 if 'bottom' in i['entryId']:
                     _user_info.cursor = i['content']['value']
-            # _user_info.cursor = raw_data[-1]['entries'][0]['content']['value']
-        
-        if start_label:     #判断是否超出时间范围
-            if not has_retweet and not has_highlights:
-                global First_Page
-                if First_Page:   #第一页的返回值需特殊处理
-                    raw_data = raw_data[-1]['entries'][0]['content']['items']
-                    First_Page = False
-                else:
-                    if 'moduleItems' not in raw_data[0]:    #usermedia新模式，所有推文已全部下载完成
-                        return False
-                    else:
-                        raw_data = raw_data[0]['moduleItems']
-            photo_lst = get_url_from_content(raw_data)
-        else:
-            return False
-        
-        if not photo_lst:
-            photo_lst.append(True)
     except Exception as e:
-        error_msg = str(e)
-        location = f"main.py:get_download_url (第294-333行附近)"
-        print('获取推文信息错误')
-        print(error_msg)
-        if response:
-            print(f"响应内容: {response[:500]}...")  # 只打印前500个字符
-            log_error("获取推文信息错误", location, error_msg, _user_info, f"响应内容: {response[:500]}")
-        else:
-            print("请求未完成，未获取到响应")
-            log_error("获取推文信息错误", location, error_msg, _user_info, "请求未完成，未获取到响应")
-        return False
+        print(f'获取推文信息错误: {e}')
+        log_error("获取推文信息错误", "get_download_url", str(e), _user_info, f"响应: {response[:500] if response else 'None'}")
+        return []
+
+    photo_lst = []
+    if start_label:
+        if not has_retweet and not has_highlights:
+            global First_Page
+            if First_Page:
+                first_entry = raw_data[-1]['entries'][0]['content']
+                if 'items' in first_entry:
+                    raw_data = first_entry['items']
+                elif 'moduleItems' in first_entry:
+                    raw_data = first_entry['moduleItems']
+                else:
+                    print('推文列表为空或API结构变化')
+                    return [True]
+                First_Page = False
+            else:
+                if 'moduleItems' in raw_data[0]:
+                    raw_data = raw_data[0]['moduleItems']
+                else:
+                    return []
+
+        photo_lst = get_url_from_content(raw_data)
+
+    if not photo_lst:
+        photo_lst = [True]
     return photo_lst
 
 def download_control(_user_info):
     async def _main():
         async def down_save(url, prefix, csv_info, order: int):
-            if '.mp4' in url:
-                _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.mp4'
+            is_video = '.mp4' in url or csv_info[4] == 'Video'
+            if is_video:
+                _file_name = f'{_user_info.save_path_videos + os.sep}{prefix}_{_user_info.count + order}.mp4'
             else:
                 try:
                     if orig_format:
                         url += f'?name=orig'
-                        _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}' # 根据图片 url 获取原始格式
+                        _file_name = f'{_user_info.save_path_images + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}' # 根据图片 url 获取原始格式
                     else: # 指定格式时，先使用 name=orig，404 则切回 name=4096x4096，以保证最大尺寸
-                        _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
+                        _file_name = f'{_user_info.save_path_images + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
                         if img_format != 'png':
                             url += f'?format=jpg&name=4096x4096'
                         else:
@@ -432,17 +506,23 @@ def main(_user_info: object):
     re_token = 'ct0=(.*?);'
     _headers['x-csrf-token'] = re.findall(re_token,_headers['cookie'])[0]
     _headers['referer'] = 'https://twitter.com/' + _user_info.screen_name
-    if not get_other_info(_user_info):
+    user_result = get_other_info(_user_info)
+    if user_result == 'user_unavailable':
+        print(f'用户 {_user_info.screen_name} 被封禁或注销，已跳过')
+        return None
+    elif not user_result:
         print(f'用户 {_user_info.screen_name} 获取信息失败，跳过该用户继续处理下一个')
         log_error("用户信息获取失败", "main.py:main (第395行)", f"用户 {_user_info.screen_name} 的信息获取失败，已跳过", _user_info)
         return False
     print_info(_user_info)
     _path = settings['save_path'] + _user_info.screen_name
     if not os.path.exists(_path):   #创建文件夹
-        os.makedirs(settings['save_path']+_user_info.screen_name)       #用户名建文件夹
-        _user_info.save_path = settings['save_path']+_user_info.screen_name
-    else:
-        _user_info.save_path = _path
+        os.makedirs(_path)                          #用户名建文件夹
+        os.makedirs(os.path.join(_path, 'images'))  #图片子文件夹
+        os.makedirs(os.path.join(_path, 'videos'))  #视频子文件夹
+    _user_info.save_path = _path
+    _user_info.save_path_images = os.path.join(_path, 'images')
+    _user_info.save_path_videos = os.path.join(_path, 'videos')
 
     global db_file
     db_file = db_log(_user_info.save_path, _user_info.name, _user_info.screen_name, settings['time_range'], db_config)
@@ -456,19 +536,19 @@ def main(_user_info: object):
         cache_data = cache_gen(_user_info.save_path)
 
     if autoSync:
-        files = sorted(os.listdir(_user_info.save_path))
+        # 扫描 images 和 videos 文件夹
+        image_files = sorted(os.listdir(_user_info.save_path_images)) if os.path.exists(_user_info.save_path_images) else []
+        video_files = sorted(os.listdir(_user_info.save_path_videos)) if os.path.exists(_user_info.save_path_videos) else []
+        files = image_files + video_files
         if len(files) > 0:
             global start_time_stamp
             re_rule = r'\d{4}-\d{2}-\d{2}'
             for i in files[::-1]:
-                if "-img_" in i:
+                if "-img_" in i or "-vid_" in i:
                     start_time_stamp = time2stamp(re.findall(re_rule, i)[0])
                     break
-                elif "-vid_" in i:
-                    start_time_stamp = time2stamp(re.findall(re_rule, i)[0])
-                    break
-                else:
-                    start_time_stamp = backup_stamp
+            else:
+                start_time_stamp = backup_stamp
         else:
             start_time_stamp = backup_stamp
 
@@ -485,8 +565,37 @@ def main(_user_info: object):
 
 if __name__=='__main__':
     _start = time.time()
-    for i in settings['user_lst'].split(','):
-        main(User_info(i))
+    if own_likes:
+        # 第一阶段：下载自己的 Likes
+        screen_name = "laoniuer"
+        print(f"[INFO] 第一阶段：下载账号 {screen_name} 的 Likes")
+        main(User_info(screen_name))
         start_label = True
         First_Page = True
+
+        # 第二阶段：重置模式为下载用户自己发的内容
+        print("\n[INFO] 第二阶段：下载 user_list.txt 中用户自己发的内容")
+        has_retweet = settings['has_retweet']
+        has_likes = False
+        has_highlights = settings['high_lights']
+        if settings['time_range']:
+            start_time,end_time = settings['time_range'].split(':')
+            start_time_stamp,end_time_stamp = time2stamp(start_time),time2stamp(end_time)
+        else:
+            start_time_stamp = backup_stamp
+
+    # 下载 user_list.txt 里的用户
+    user_list = load_user_list()
+    if not user_list:
+        if not own_likes:
+            print("[ERROR] No users to download. Please check user_list.txt")
+            sys.exit(1)
+        else:
+            print("[INFO] user_list.txt 为空或不存在，跳过下载用户自己发的内容")
+    else:
+        print(f"[INFO] Loaded {len(user_list)} users")
+        for i in user_list:
+            main(User_info(i))
+            start_label = True
+            First_Page = True
     print(f'共耗时:{time.time()-_start}秒\n共调用{request_count}次API\n共下载{down_count}份图片/视频')

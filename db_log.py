@@ -21,6 +21,7 @@ class db_log():
 
         # 清理表名中的非法字符
         table_name = self._sanitize_table_name(screen_name)
+        self.table_name = table_name
 
         try:
             # 连接数据库
@@ -40,11 +41,9 @@ class db_log():
             self._write_metadata(table_name, user_name, screen_name, tweet_range, save_path)
 
         except Exception as e:
-            print(f"数据库连接失败: {e}")
-            raise
-
-        self.table_name = table_name
-        pass
+            print(f"数据库连接失败，已跳过数据库记录: {e}")
+            self.conn = None
+            self.cursor = None
 
     def _sanitize_table_name(self, name: str) -> str:
         """清理表名，只保留字母数字和下划线"""
@@ -121,6 +120,9 @@ class db_log():
         写入单条日志数据
         数据格式: [tweet_date, display_name, user_name, tweet_url, media_type, media_url, saved_filename, tweet_content, favorite_count, retweet_count, reply_count]
         """
+        if not self.cursor:
+            return
+
         try:
             # 转换时间戳为 datetime
             tweet_date = self.stamp2datetime(main_par_info[0])
