@@ -194,6 +194,39 @@ def log_error(error_type, location, error_msg, user_info=None, additional_info=N
             f.write(f"附加信息: {additional_info}\n")
         f.write(f"{'='*60}\n")
 
+def save_last_user(screen_name):
+    """保存当前处理的用户，下次运行从这里继续"""
+    state_file = os.path.join(os.getcwd(), "last_run_state.json")
+    try:
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "last_user": screen_name,
+                "timestamp": datetime.now().isoformat()
+            }, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] 无法保存运行状态: {e}")
+
+def clear_last_user():
+    """清除保存的用户状态（全部处理完时调用）"""
+    state_file = os.path.join(os.getcwd(), "last_run_state.json")
+    try:
+        if os.path.exists(state_file):
+            os.remove(state_file)
+    except Exception as e:
+        print(f"[WARN] 无法清除运行状态: {e}")
+
+def get_last_user():
+    """获取上次中断的用户"""
+    state_file = os.path.join(os.getcwd(), "last_run_state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("last_user")
+        except Exception:
+            pass
+    return None
+
 def get_other_info(_user_info):
     url = 'https://twitter.com/i/api/graphql/xc8f1g7BYqr6VTzTbvNlGw/UserByScreenName?variables={"screen_name":"' + _user_info.screen_name + '","withSafetyModeUserFields":false}&features={"hidden_profile_likes_enabled":false,"hidden_profile_subscriptions_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"subscriptions_verification_info_verified_since_enabled":true,"highlights_tweets_tab_ui_enabled":true,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true}&fieldToggles={"withAuxiliaryUserLabels":false}'
     response = None
@@ -381,6 +414,11 @@ def get_download_url(_user_info):
     except Exception:
         if 'Rate limit exceeded' in response:
             print('API次数已超限')
+            # 保存当前用户，下次从这里继续
+            save_last_user(_user_info.screen_name)
+            print(f'[INFO] 已保存进度：下次运行从用户 {_user_info.screen_name} 继续')
+            print('[INFO] 程序退出')
+            sys.exit(1)
         else:
             print('获取数据失败')
         print(response)
@@ -453,6 +491,12 @@ def download_control(_user_info):
                     print(url)
                     return False
 
+            # 先检查本地文件是否已经存在且大于0，存在直接跳过
+            if os.path.exists(_file_name) and os.path.getsize(_file_name) > 0:
+                if log_output:
+                    print(f'{_file_name}=====>文件已存在，跳过')
+                return
+
             csv_info[-5] = os.path.split(_file_name)[1]
             if md_output: # 在下载完毕之前先输出到 Markdown，以尽可能保证高并发下载也能得到正确的推文顺序。
                 md_file.media_tweet_input(csv_info, prefix)
@@ -478,7 +522,7 @@ def download_control(_user_info):
                 except Exception as e:
                     if '.mp4' in url or orig_format or str(e) != "404":
                         count += 1
-                        if count >= 50:
+                        if count >= 10:
                             print(f'{_file_name}=====>第{count}次下载失败，已跳过该文件。')
                             print(url)
                             break
@@ -515,7 +559,108 @@ def main(_user_info: object):
         log_error("用户信息获取失败", "main.py:main (第395行)", f"用户 {_user_info.screen_name} 的信息获取失败，已跳过", _user_info)
         return False
     print_info(_user_info)
-    _path = settings['save_path'] + _user_info.screen_name
+    # 映射文件：记录 screen_name -> folder_name
+    map_file = os.path.join(os.getcwd(), "user_folder_map.json")
+    folder_map = {}
+    if os.path.exists(map_file):
+        try:
+            with open(map_file, "r", encoding="utf-8") as f:
+                folder_map = json.load(f)
+        except Exception:
+            pass
+
+    safe_name = del_special_char(_user_info.name) if _user_info.name else ""
+    screen_name = _user_info.screen_name
+    save_dir = settings['save_path']
+
+    # ========== 步骤1：确定想要的文件夹名（优先用当前昵称） ==========
+    desired_name = safe_name if safe_name else screen_name
+
+    # ========== 步骤2：查找当前用户已有的文件夹 ==========
+    existing_path = None
+    existing_name = None
+
+    # 先从映射找
+    if screen_name in folder_map:
+        info = folder_map[screen_name]
+        existing_name = info.get("folder_name", None) if isinstance(info, dict) else info
+        if existing_name:
+            test_path = os.path.join(save_dir, existing_name)
+            if os.path.isdir(test_path):
+                existing_path = test_path
+
+    # 如果映射没找到，搜索旧格式
+    if not existing_path:
+        try:
+            if os.path.exists(save_dir):
+                for entry in os.listdir(save_dir):
+                    entry_path = os.path.join(save_dir, entry)
+                    if not os.path.isdir(entry_path):
+                        continue
+                    # 匹配旧格式：纯 id、id_*、*_id
+                    if entry == screen_name or entry.startswith(screen_name + "_") or entry.endswith("_" + screen_name):
+                        existing_path = entry_path
+                        existing_name = entry
+                        break
+        except Exception:
+            pass
+
+    # ========== 步骤3：决定最终文件夹名 ==========
+    target_name = desired_name
+    target_path = os.path.join(save_dir, target_name)
+
+    # 检查 desired_name 是否被其他用户占用
+    conflict = False
+    for sn, info in folder_map.items():
+        fn = info.get("folder_name", None) if isinstance(info, dict) else info
+        if fn == desired_name and sn != screen_name:
+            conflict = True
+            break
+
+    # 如果冲突，或者文件夹已存在且不是我们的，加序号
+    if conflict or (os.path.exists(target_path) and (not existing_path or os.path.normcase(target_path) != os.path.normcase(existing_path))):
+        counter = 1
+        while True:
+            test_name = f"{desired_name}_{counter}"
+            test_path = os.path.join(save_dir, test_name)
+
+            # 检查这个名字是否被占用
+            occupied = False
+            for sn, info in folder_map.items():
+                fn = info.get("folder_name", None) if isinstance(info, dict) else info
+                if fn == test_name and sn != screen_name:
+                    occupied = True
+                    break
+            if not occupied and not os.path.exists(test_path):
+                target_name = test_name
+                target_path = test_path
+                break
+            counter += 1
+
+    # ========== 步骤4：重命名文件夹（如果需要） ==========
+    if existing_path and os.path.normcase(existing_path) != os.path.normcase(target_path):
+        try:
+            print(f"[INFO] 更新文件夹名：{os.path.basename(existing_path)} -> {target_name}")
+            os.rename(existing_path, target_path)
+            existing_path = target_path
+        except Exception as e:
+            print(f"[WARN] 文件夹重命名失败，继续使用原文件夹：{e}")
+            target_path = existing_path
+            target_name = os.path.basename(existing_path)
+
+    # ========== 步骤5：更新映射文件 ==========
+    folder_map[screen_name] = {
+        "nickname": safe_name,
+        "folder_name": target_name
+    }
+    try:
+        with open(map_file, "w", encoding="utf-8") as f:
+            json.dump(folder_map, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] 无法保存映射文件：{e}")
+
+    _path = target_path
+
     if not os.path.exists(_path):   #创建文件夹
         os.makedirs(_path)                          #用户名建文件夹
         os.makedirs(os.path.join(_path, 'images'))  #图片子文件夹
@@ -594,8 +739,23 @@ if __name__=='__main__':
             print("[INFO] user_list.txt 为空或不存在，跳过下载用户自己发的内容")
     else:
         print(f"[INFO] Loaded {len(user_list)} users")
-        for i in user_list:
+
+        # 检查是否有上次中断的用户
+        last_user = get_last_user()
+        start_index = 0
+        if last_user:
+            if last_user in user_list:
+                start_index = user_list.index(last_user)
+                print(f"[INFO] 检测到上次中断，从用户 {last_user} 继续（第 {start_index + 1} 个）")
+            else:
+                print(f"[INFO] 上次中断的用户 {last_user} 不在当前列表中，从头开始")
+
+        # 从上次中断的位置继续
+        for i in user_list[start_index:]:
             main(User_info(i))
             start_label = True
             First_Page = True
+
+    # 全部处理完，清除保存的进度
+    clear_last_user()
     print(f'共耗时:{time.time()-_start}秒\n共调用{request_count}次API\n共下载{down_count}份图片/视频')
